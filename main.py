@@ -132,7 +132,6 @@ async def chat_endpoint(request: Request):
             version="v1",
         ):
             kind = event["event"]
-
             if kind == "on_chat_model_stream":
                 delta = event["data"]["chunk"].content
                 if delta:
@@ -154,15 +153,6 @@ async def chat_endpoint(request: Request):
                     yield f"data: {json.dumps({'type': 'chart', 'tool_name': event['name'], 'tool_response': tool_output, 'tool_id': event['run_id'], 'chart': tool_output}, ensure_ascii=False)}\n\n"
                 else:
                     yield f"data: {json.dumps({'type': 'tool_end', 'tool_name': event['name'], 'tool_response': tool_output, 'tool_id': event['run_id']}, ensure_ascii=False)}\n\n"
-
-            elif kind == "on_agent_finish":
-                final_response = event["data"]["response"]
-                if hasattr(final_response, "content"):
-                    final_response = final_response.content
-                yield f"data: {json.dumps({'type': 'final', 'content': str(final_response)}, ensure_ascii=False)}\n\n"
-                yield f"data: {json.dumps({'type': 'end'}, ensure_ascii=False)}\n\n"
-                break
-
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 if __name__ == "__main__":
