@@ -9,55 +9,38 @@ from langgraph.prebuilt import create_react_agent
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langchain_core.tools import tool
 import dotenv
+import uuid
 
 dotenv.load_dotenv()
 
 @tool
-def generate_chart(labels: list=[], datasets: list=[], chart_type: str="line") -> dict:
+def artifact(kind: str,
+            title: str | None = None,
+            id: str | None = None,
+            data: dict | str | None = None,
+            action: str = "create",
+            meta: dict | None = None) -> dict:
     """
-    Chart.js 用のグラフデータを生成するツール
-    LLMへの説明：これを使えばチャット上でグラフが勝手に描画されるので、LLMが自ら描く必要はないよ
-    Args:
-        data: {"labels": [...], "datasets": [...]}
-        chart_type: "bar", "line", "pie" など
-    Returns:
-        Chart.js の構造に従った dict
+    ClaudeのArtifacts相当を模倣するツール。
+    例えば、グラフ描画ツールの出力をそのままアーティファクトとして保存することができる。
+    グラフ描画やhtml, 画像生成ツールなどと組み合わせて利用することを想定。
+    仕様:
+    - kind: "markdown" | "chart" | "table" | "html" | "image" | "file"
+    - action: "create" | "update" | "close"
+    - id: update/close時は必須。create時は未指定ならサーバー側で採番。
+    - data: アーティファクトの中身
     """
-    # とりあえずダミーデータを返す
-    # return {
-    #     "type": "chart",
-    #     "chartType": "line",
-    #     "data": {
-    #         "labels": ["January", "February", "March", "April", "May"],
-    #         "datasets": [
-    #             {
-    #                 "label": "Sample Dataset",
-    #                 "data": [65, 59, 80, 81, 56],
-    #                 "fill": False,
-    #                 "borderColor": "rgb(255, 192, 192)",
-    #                 "lineTension": 0.1
-    #             }
-    #         ]
-    #     },
-    #     "options": {
-    #         "responsive": True,
-    #         "plugins": {
-    #             "legend": {"position": "top"}
-    #         }
-    #     }
-    # }
+    if id is None:
+        id = str(uuid.uuid4())
     return {
-        "type": "chart",
-        "chartType": chart_type,
-        "data": {
-            "labels": labels,
-            "datasets": datasets
-        },
-        "options": {
-            "responsive": True,
-            "plugins": {
-                "legend": {"position": "top"}
-            }
+        "type": "artifact",
+        "action": action,
+        "artifact": {
+            "id": id,
+            "kind": kind,
+            "title": title,
+            "data": data,
+            "meta": meta or {}
         }
     }
 
@@ -102,7 +85,7 @@ async def get_agent():
         mcp_client = MultiServerMCPClient(server_connections)
         tools = await mcp_client.get_tools()  # ← await OK
         # ローカルツールを追加
-        tools.append(generate_chart)
+        tools.append(artifact)
         print(f"✅ MCPツールをロードしました: {[t.name for t in tools]}")
         _agent = create_react_agent(llm, tools)
     return _agent
@@ -153,6 +136,9 @@ async def chat_endpoint(request: Request):
                     yield f"data: {json.dumps({'type': 'chart', 'tool_name': event['name'], 'tool_response': tool_output, 'tool_id': event['run_id'], 'chart': tool_output}, ensure_ascii=False)}\n\n"
                 else:
                     yield f"data: {json.dumps({'type': 'tool_end', 'tool_name': event['name'], 'tool_response': tool_output, 'tool_id': event['run_id']}, ensure_ascii=False)}\n\n"
+    
+            elif kind == "artifact":
+                print(f"Artifact event: {event['data']}")
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 if __name__ == "__main__":
