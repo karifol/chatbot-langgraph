@@ -4,30 +4,28 @@ import json
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from langchain_openai import ChatOpenAI
 from langgraph.prebuilt import create_react_agent
+# from langchain_aws import ChatBedrock
+from langchain_openai import ChatOpenAI
 from langchain_mcp_adapters.client import MultiServerMCPClient
-from langchain_anthropic import ChatAnthropic   # ← ✅ ここがポイント
 import dotenv
 
 dotenv.load_dotenv()
 
 # -------------------------
-# LLM
+# Amazon Bedrock
 # -------------------------
-# --- OpenAI ---
-# llm = ChatOpenAI(
-#     model="gpt-4o-mini",
-#     api_key=os.getenv("OPENAI_API_KEY"),
-#     streaming=True,
+# --- LLM ---
+# llm = ChatBedrock(
+#     region_name="ap-northeast-1",
+#     model="anthropic.claude-3-5-sonnet-20240620-v1:0",
+#     max_tokens=1000,
+#     temperature=0.5,
 # )
-# --- Anthropic ✅ ---
-llm = ChatAnthropic(
-    model="claude-sonnet-4-20250514",    # Claude 3.5 Sonnet のモデル名
-    anthropic_api_key=os.getenv("ANTHROPIC_API_KEY"),
+llm = ChatOpenAI(
+    model="gpt-4o-mini",
+    api_key=os.getenv("OPENAI_API_KEY"),
     streaming=True,
-    max_tokens=2000,
-    temperature=0.1,
 )
 
 # --- MCP Client ---
@@ -52,7 +50,6 @@ server_connections = {
 # -------------------------
 # Lazy Init で agent を構築
 # -------------------------
-
 _agent = None
 
 async def get_agent():
@@ -60,7 +57,7 @@ async def get_agent():
     if _agent is None:
         mcp_client = MultiServerMCPClient(server_connections)
         tools = await mcp_client.get_tools()  # ← await OK
-        # tools = []  # MCPツールを使わない場合
+        # ローカルツールを追加
         print(f"✅ MCPツールをロードしました: {[t.name for t in tools]}")
         _agent = create_react_agent(llm, tools)
     return _agent
@@ -93,8 +90,6 @@ async def chat_endpoint(request: Request):
             if kind == "on_chat_model_stream":
                 delta = event["data"]["chunk"].content
                 if delta:
-                    if delta[0]["type"] != "text":
-                        continue
                     yield f"data: {json.dumps({'type': 'token', 'content': delta}, ensure_ascii=False)}\n\n"
 
             elif kind == "on_tool_start":
@@ -107,7 +102,12 @@ async def chat_endpoint(request: Request):
                         tool_output = json.loads(tool_output.content)
                 except Exception:
                     pass
-                yield f"data: {json.dumps({'type': 'tool_end', 'tool_name': event['name'], 'tool_response': tool_output, 'tool_id': event['run_id']}, ensure_ascii=False)}\n\n"
+
+                if isinstance(tool_output, dict) and tool_output.get("type") == "chart":
+                    # グラフデータの場合
+                    yield f"data: {json.dumps({'type': 'chart', 'tool_name': event['name'], 'tool_response': tool_output, 'tool_id': event['run_id'], 'chart': tool_output}, ensure_ascii=False)}\n\n"
+                else:
+                    yield f"data: {json.dumps({'type': 'tool_end', 'tool_name': event['name'], 'tool_response': tool_output, 'tool_id': event['run_id']}, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
